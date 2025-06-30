@@ -1,5 +1,6 @@
 FROM nvidia/cuda:12.0.1-devel-ubuntu18.04
 
+# Install essential packages
 RUN apt update && apt install -y --no-install-recommends \
     git \
     python3 \
@@ -10,9 +11,17 @@ RUN apt update && apt install -y --no-install-recommends \
     curl && \
     rm -rf /var/lib/apt/lists/*
 
+# Set working directory
 WORKDIR /root/htpclient
 
-RUN git clone https://github.com/hashtopolis/agent-python.git . && \
-    pip3 install -r requirements.txt
+# Clone agent repo
+RUN git clone https://github.com/hashtopolis/agent-python.git .
 
+# Show files for debug
+RUN ls -l
+
+# Install Python requirements
+RUN pip3 install -r requirements.txt
+
+# Default shell
 CMD ["bash"]
