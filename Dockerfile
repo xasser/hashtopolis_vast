@@ -7,15 +7,12 @@ RUN apt update && apt install -y --no-install-recommends \
     python3-psutil \
     python3-requests \
     pciutils \
-    curl \
-    unzip && \
+    curl && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /root/htpclient
 
-RUN git clone https://github.com/hashtopolis/agent-python.git && \
-    mv agent-python/* . && \
-    rm -rf agent-python && \
+RUN git clone https://github.com/hashtopolis/agent-python.git . && \
     pip3 install -r requirements.txt
 
 CMD ["bash"]
