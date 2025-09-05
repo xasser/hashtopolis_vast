@@ -15,7 +15,7 @@ concurrency:
 env:
   IMAGE_NAME: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/yourimage   # <-- change
   PLATFORMS: linux/amd64,linux/arm64
-  DOCKER_CONTEXT: .
+  BUILD_CONTEXT_DIR: .        # <-- renamed (was DOCKER_CONTEXT) to avoid collision
   DOCKERFILE: ./Dockerfile
 
 jobs:
@@ -28,30 +28,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Make sure Docker CLI + daemon are available
       - name: Ensure Docker is running
-        id: dockerd
         shell: bash
         run: |
           set -euo pipefail
           if ! command -v docker >/dev/null 2>&1; then
-            echo "::group::Install Docker"
             curl -fsSL https://get.docker.com | sh
-            echo "::endgroup::"
           fi
-          if ! docker info >/dev/null 2>&1; then
-            # Try both services; ignore non-systemd errors
-            sudo systemctl start docker || sudo service docker start || true
-            # Fallback: spawn dockerd in background if needed
-            if ! docker info >/dev/null 2>&1; then
-              sudo nohup dockerd >/tmp/dockerd.log 2>&1 &
-              sleep 5
-            fi
-          fi
-          # Final check (will fail the job early if still broken)
+          sudo systemctl start docker || sudo service docker start || true
+          # Defensive: if someone set DOCKER_CONTEXT in repo/org envs, drop it
+          unset DOCKER_CONTEXT || true
           docker info >/dev/null
 
-      # Check free space and do a short cleanup only if needed
       - name: Check free space
         id: space
         shell: bash
@@ -61,7 +49,7 @@ jobs:
           avail_mb=$(df -Pm / | awk 'NR==2{print $4}')
           echo "avail_mb=$avail_mb" >> "$GITHUB_OUTPUT"
 
-      - name: Quick cleanup (≤ 2 min, only if <15 GB free)
+      - name: Quick cleanup
         if: ${{ fromJSON(steps.space.outputs.avail_mb) < 15000 }}
         timeout-minutes: 2
         shell: bash
@@ -71,10 +59,10 @@ jobs:
           docker system prune -af || true
           df -h /
 
-      - name: Set up QEMU (multi-arch)
+      - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
-      - name: Set up Buildx (GC budget 6GB)
+      - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
         with:
           buildkitd-flags: "--oci-worker-gc --oci-worker-gc-keepstorage 6GB"
@@ -100,7 +88,7 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          context: ${{ env.DOCKER_CONTEXT }}
+          context: ${{ env.BUILD_CONTEXT_DIR }}   # <-- use the renamed var
           file: ${{ env.DOCKERFILE }}
           platforms: ${{ env.PLATFORMS }}
           push: ${{ github.event_name != 'pull_request' }}
