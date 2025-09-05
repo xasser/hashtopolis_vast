@@ -2,10 +2,10 @@ name: Docker – Build & Publish
 
 on:
   push:
-    branches: [ "main" ]          # push "latest" on main
-    tags: [ "v*", "*.*.*" ]       # versioned tags e.g. v1.2.3 or 1.2.3
+    branches: [ "main" ]
+    tags: [ "v*", "*.*.*" ]
   pull_request:
-    branches: [ "main" ]          # build only, no push
+    branches: [ "main" ]
   workflow_dispatch: {}
 
 concurrency:
@@ -13,50 +13,57 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  IMAGE_NAME: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/yourimage
+  IMAGE_NAME: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/yourimage   # <— change
   PLATFORMS: linux/amd64,linux/arm64
-  DOCKER_CONTEXT: .               # change if your Dockerfile is in a subfolder
+  DOCKER_CONTEXT: .
   DOCKERFILE: ./Dockerfile
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    permissions: { contents: read }
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      # Reclaim space on GitHub-hosted runners
-      - name: Free disk space
-        if: ${{ runner.os == 'Linux' }}
+      - name: Check free space
+        id: space
         run: |
-          df -h
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc || true
+          set -euo pipefail
+          df -h /
+          avail_mb=$(df -Pm / | awk 'NR==2{print $4}')
+          echo "avail_mb=$avail_mb" >> "$GITHUB_OUTPUT"
+
+      # Quick cleanup only if <15GB free; hard cap 3 minutes
+      - name: Quick cleanup (capped)
+        if: ${{ steps.space.outputs.avail_mb < 15000 }}
+        timeout-minutes: 3
+        run: |
+          set -euxo pipefail
+          # remove big toolchains fast; skip apt purges (slow)
+          sudo rm -rf /usr/local/lib/android || true &
+          sudo rm -rf /usr/share/dotnet || true &
+          sudo rm -rf /opt/ghc || true &
           docker system prune -af || true
-          df -h
+          wait || true
+          df -h /
 
-      - name: Set up QEMU (multi-arch)
-        uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-qemu-action@v3
 
-      - name: Set up Buildx (with GC limits)
+      - name: Set up Buildx (small GC budget)
         uses: docker/setup-buildx-action@v3
         with:
-          buildkitd-flags: --oci-worker-gc --oci-worker-gc-keepstorage 8GB
+          buildkitd-flags: --oci-worker-gc --oci-worker-gc-keepstorage 6GB
 
-      - name: Docker metadata (tags & labels)
+      - name: Docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE_NAME }}
           tags: |
-            # latest on default branch
             type=raw,value=latest,enable={{is_default_branch}}
-            # semver tags when you push a tag like v1.2.3 or 1.2.3
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            # short SHA tag for any push
             type=sha
 
       - name: Login to Docker Hub
@@ -66,7 +73,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build (PRs) / Build & Push (main/tags)
+      - name: Build (PR: no push) / Build & Push
         uses: docker/build-push-action@v6
         with:
           context: ${{ env.DOCKER_CONTEXT }}
@@ -77,8 +84,6 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          provenance: false   # reduce artifact size/time
-          sbom: false         # disable SBOM to save space
-          # Example build args (uncomment & customize)
-          # build-args: |
-          #   APP_VERSION=${{ github.ref_name }}
+          # keep runner disk small
+          provenance: false
+          sbom: false
