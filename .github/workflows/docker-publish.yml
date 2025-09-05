@@ -13,14 +13,16 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  IMAGE_NAME: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/REPLACE_IMAGE_NAME
+  IMAGE_NAME: docker.io/xasser/hashtovast
   PLATFORMS: linux/amd64,linux/arm64
   BUILD_CONTEXT_DIR: .
   DOCKERFILE: ./Dockerfile
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # If you're on a self-hosted runner (your logs show actions-runner paths), keep this:
+    runs-on: self-hosted
+    # If you use GitHub-hosted instead, change to: runs-on: ubuntu-latest
     permissions:
       contents: read
 
