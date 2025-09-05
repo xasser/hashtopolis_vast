@@ -15,7 +15,7 @@ concurrency:
 env:
   IMAGE_NAME: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/yourimage   # <-- change
   PLATFORMS: linux/amd64,linux/arm64
-  BUILD_CONTEXT_DIR: .        # <-- renamed (was DOCKER_CONTEXT) to avoid collision
+  BUILD_CONTEXT_DIR: .
   DOCKERFILE: ./Dockerfile
 
 jobs:
@@ -28,7 +28,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Ensure Docker is running
+      - name: Ensure Docker is running (and clear conflicting env)
         shell: bash
         run: |
           set -euo pipefail
@@ -36,38 +36,53 @@ jobs:
             curl -fsSL https://get.docker.com | sh
           fi
           sudo systemctl start docker || sudo service docker start || true
-          # Defensive: if someone set DOCKER_CONTEXT in repo/org envs, drop it
           unset DOCKER_CONTEXT || true
           docker info >/dev/null
 
-      - name: Check free space
-        id: space
-        shell: bash
-        run: |
-          set -euo pipefail
-          df -h /
-          avail_mb=$(df -Pm / | awk 'NR==2{print $4}')
-          echo "avail_mb=$avail_mb" >> "$GITHUB_OUTPUT"
-
-      - name: Quick cleanup
-        if: ${{ fromJSON(steps.space.outputs.avail_mb) < 15000 }}
-        timeout-minutes: 2
+      # Free a few GB without touching Docker images/containers (fast, safe)
+      - name: Quick free space (safe)
         shell: bash
         run: |
           set -euxo pipefail
+          df -h /
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc || true
-          docker system prune -af || true
           df -h /
 
-      - name: Set up QEMU
+      # If a previous run left a broken BuildKit container, remove it
+      - name: Reset stale Buildx/BuildKit
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Remove any existing builders (ignore errors)
+          docker buildx ls >/dev/null 2>&1 || true
+          for b in $(docker buildx ls 2>/dev/null | awk 'NR>1 {print $1}'); do
+            docker buildx rm -f "$b" || true
+          done
+          # Remove any orphaned buildkit containers
+          docker ps -a --filter 'name=buildx_buildkit' -q | xargs -r docker rm -f || true
+
+      - name: Set up QEMU (multi-arch)
         uses: docker/setup-qemu-action@v3
 
-      - name: Set up Buildx
+      - name: Set up Buildx (stable BuildKit, GC capped)
+        id: buildx
         uses: docker/setup-buildx-action@v3
         with:
+          install: true
+          driver-opts: |
+            image=moby/buildkit:v0.16.0
+            network=host
           buildkitd-flags: "--oci-worker-gc --oci-worker-gc-keepstorage 6GB"
 
-      - name: Docker metadata
+      # Bootstrap waits until the BuildKit container is actually running
+      - name: Verify builder is up
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx inspect --bootstrap
+          docker buildx ls
+
+      - name: Docker metadata (tags & labels)
         id: meta
         uses: docker/metadata-action@v5
         with:
@@ -88,7 +103,7 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          context: ${{ env.BUILD_CONTEXT_DIR }}   # <-- use the renamed var
+          context: ${{ env.BUILD_CONTEXT_DIR }}
           file: ${{ env.DOCKERFILE }}
           platforms: ${{ env.PLATFORMS }}
           push: ${{ github.event_name != 'pull_request' }}
