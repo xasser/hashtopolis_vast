@@ -17,7 +17,6 @@ env:
   TMP_TAG: tmp-${{ github.run_id }}-${{ github.run_attempt }}
 
 jobs:
-  # Build each platform in its own job to cut disk usage ~in half per job.
   build-arch:
     runs-on: ubuntu-latest
     strategy:
@@ -33,18 +32,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Free ~20–30GB quickly so CUDA images fit.
       - name: Free disk space (fast)
         timeout-minutes: 3
         shell: bash
         run: |
           set -euxo pipefail
           df -h /
-          # delete biggest toolchains in parallel (safe on GH runners)
-          sudo rm -rf /usr/local/lib/android || true &
-          sudo rm -rf /usr/share/dotnet || true &
-          sudo rm -rf /opt/ghc || true &
-          wait || true
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc || true
           docker system prune -af || true
           df -h /
 
@@ -70,8 +64,8 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
-          platforms: ${{ matrix.platform }}     # build one arch only
-          push: true                            # push right away (keeps disk low)
+          platforms: ${{ matrix.platform }}
+          push: true
           tags: ${{ env.IMAGE_NAME }}:${{ env.TMP_TAG }}-${{ matrix.arch }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -84,7 +78,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "${{ steps.build.outputs.digest }}" > digest.txt
-        # store as per-arch artifact
+
       - name: Upload digest
         if: ${{ github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v4
@@ -92,18 +86,17 @@ jobs:
           name: digest-${{ matrix.arch }}
           path: digest.txt
 
-  # After both arch builds finish, create a multi-arch manifest with the real tags.
   manifest:
     if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     needs: [ build-arch ]
 
     steps:
-      - name: Download digests
+      - name: Download digests (keep separate dirs)
         uses: actions/download-artifact@v4
         with:
           pattern: digest-*
-          merge-multiple: true
+          merge-multiple: false   # <-- key change; creates digest-amd64/, digest-arm64/
 
       - name: Docker metadata (final tags)
         id: meta
@@ -128,14 +121,15 @@ jobs:
           set -euxo pipefail
           DIGEST_AMD64=$(cat digest-amd64/digest.txt)
           DIGEST_ARM64=$(cat digest-arm64/digest.txt)
+
           # Convert newline-separated tags to repeated -t flags
           TAGS="${{ steps.meta.outputs.tags }}"
           DEST_ARGS=""
           while IFS= read -r tag; do
             [ -n "$tag" ] && DEST_ARGS="$DEST_ARGS -t $tag"
           done <<< "$TAGS"
-          # stitch the two single-arch images into one manifest list
+
           docker buildx imagetools create $DEST_ARGS "$DIGEST_AMD64" "$DIGEST_ARM64"
-          # show the manifest of the first tag
+
           FIRST_TAG="$(printf '%s\n' "$TAGS" | head -n1)"
           docker buildx imagetools inspect "$FIRST_TAG" || true
