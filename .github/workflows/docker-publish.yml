@@ -13,63 +13,24 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  IMAGE_NAME: docker.io/xasser/hashtovast
+  IMAGE_NAME: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/REPLACE_IMAGE_NAME
   PLATFORMS: linux/amd64,linux/arm64
-  BUILD_CONTEXT_DIR: .
-  DOCKERFILE: ./Dockerfile
 
 jobs:
   build:
-    # If you're on a self-hosted runner (your logs show actions-runner paths), keep this:
-    runs-on: self-hosted
-    # If you use GitHub-hosted instead, change to: runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    runs-on: ubuntu-latest   # <-- GitHub-hosted runner (no setup on your side)
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Ensure Docker is running
-        shell: bash
-        run: |
-          set -euo pipefail
-          if ! command -v docker >/dev/null 2>&1; then
-            curl -fsSL https://get.docker.com | sh
-          fi
-          sudo systemctl start docker || sudo service docker start || true
-          # Avoid collision with Docker CLI context env
-          unset DOCKER_CONTEXT || true
-          docker info >/dev/null
-
-      - name: Reset stale Buildx/BuildKit
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker buildx ls >/dev/null 2>&1 || true
-          for b in $(docker buildx ls 2>/dev/null | awk 'NR>1 {print $1}'); do
-            docker buildx rm -f "$b" || true
-          done
-          docker ps -a --filter 'name=buildx_buildkit' -q | xargs -r docker rm -f || true
-
-      - name: Set up QEMU
+      - name: Set up QEMU (multi-arch)
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
         with:
-          install: true
-          driver-opts: |
-            image=moby/buildkit:v0.16.0
-            network=host
           buildkitd-flags: "--oci-worker-gc --oci-worker-gc-keepstorage=6000"
-
-      - name: Bootstrap builder
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker buildx inspect --bootstrap
-          docker buildx ls
 
       - name: Docker metadata
         id: meta
@@ -92,8 +53,8 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          context: ${{ env.BUILD_CONTEXT_DIR }}
-          file: ${{ env.DOCKERFILE }}
+          context: .
+          file: ./Dockerfile
           platforms: ${{ env.PLATFORMS }}
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
