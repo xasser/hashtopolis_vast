@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  IMAGE_NAME: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/yourimage   # <— change
+  IMAGE_NAME: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/yourimage   # <-- change
   PLATFORMS: linux/amd64,linux/arm64
   DOCKER_CONTEXT: .
   DOCKERFILE: ./Dockerfile
@@ -21,26 +21,29 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
-    permissions: { contents: read }
+    permissions:
+      contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Check free space
         id: space
+        shell: bash
         run: |
           set -euo pipefail
           df -h /
           avail_mb=$(df -Pm / | awk 'NR==2{print $4}')
           echo "avail_mb=$avail_mb" >> "$GITHUB_OUTPUT"
 
-      # Quick cleanup only if <15GB free; hard cap 3 minutes
-      - name: Quick cleanup (capped)
-        if: ${{ steps.space.outputs.avail_mb < 15000 }}
+      # Only clean if <15GB free; capped to 3 minutes
+      - name: Quick cleanup
+        if: ${{ fromJSON(steps.space.outputs.avail_mb) < 15000 }}
         timeout-minutes: 3
+        shell: bash
         run: |
           set -euxo pipefail
-          # remove big toolchains fast; skip apt purges (slow)
           sudo rm -rf /usr/local/lib/android || true &
           sudo rm -rf /usr/share/dotnet || true &
           sudo rm -rf /opt/ghc || true &
@@ -48,12 +51,13 @@ jobs:
           wait || true
           df -h /
 
-      - uses: docker/setup-qemu-action@v3
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
-      - name: Set up Buildx (small GC budget)
+      - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
         with:
-          buildkitd-flags: --oci-worker-gc --oci-worker-gc-keepstorage 6GB
+          buildkitd-flags: "--oci-worker-gc --oci-worker-gc-keepstorage 6GB"
 
       - name: Docker metadata
         id: meta
@@ -73,7 +77,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build (PR: no push) / Build & Push
+      - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: ${{ env.DOCKER_CONTEXT }}
@@ -84,6 +88,5 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          # keep runner disk small
           provenance: false
           sbom: false
