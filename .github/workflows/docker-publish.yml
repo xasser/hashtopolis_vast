@@ -28,6 +28,30 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Make sure Docker CLI + daemon are available
+      - name: Ensure Docker is running
+        id: dockerd
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v docker >/dev/null 2>&1; then
+            echo "::group::Install Docker"
+            curl -fsSL https://get.docker.com | sh
+            echo "::endgroup::"
+          fi
+          if ! docker info >/dev/null 2>&1; then
+            # Try both services; ignore non-systemd errors
+            sudo systemctl start docker || sudo service docker start || true
+            # Fallback: spawn dockerd in background if needed
+            if ! docker info >/dev/null 2>&1; then
+              sudo nohup dockerd >/tmp/dockerd.log 2>&1 &
+              sleep 5
+            fi
+          fi
+          # Final check (will fail the job early if still broken)
+          docker info >/dev/null
+
+      # Check free space and do a short cleanup only if needed
       - name: Check free space
         id: space
         shell: bash
@@ -37,24 +61,20 @@ jobs:
           avail_mb=$(df -Pm / | awk 'NR==2{print $4}')
           echo "avail_mb=$avail_mb" >> "$GITHUB_OUTPUT"
 
-      # Only clean if <15GB free; capped to 3 minutes
-      - name: Quick cleanup
+      - name: Quick cleanup (≤ 2 min, only if <15 GB free)
         if: ${{ fromJSON(steps.space.outputs.avail_mb) < 15000 }}
-        timeout-minutes: 3
+        timeout-minutes: 2
         shell: bash
         run: |
           set -euxo pipefail
-          sudo rm -rf /usr/local/lib/android || true &
-          sudo rm -rf /usr/share/dotnet || true &
-          sudo rm -rf /opt/ghc || true &
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc || true
           docker system prune -af || true
-          wait || true
           df -h /
 
-      - name: Set up QEMU
+      - name: Set up QEMU (multi-arch)
         uses: docker/setup-qemu-action@v3
 
-      - name: Set up Buildx
+      - name: Set up Buildx (GC budget 6GB)
         uses: docker/setup-buildx-action@v3
         with:
           buildkitd-flags: "--oci-worker-gc --oci-worker-gc-keepstorage 6GB"
