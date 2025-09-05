@@ -1,0 +1,12 @@
+.git
+**/node_modules
+**/venv
+dist
+build
+.cache
+*.iso
+*.zip
+*.tar
+*.img
+data/
+datasets/
