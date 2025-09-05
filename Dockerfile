@@ -1,4 +1,5 @@
-FROM nvidia/cuda:12.0.1-devel-ubuntu18.04
+FROM 13.0.0-tensorrt-devel-ubuntu24.04
+
 
 # Install essential packages
 RUN apt update && apt install -y --no-install-recommends \
