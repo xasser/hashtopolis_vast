@@ -2,7 +2,7 @@
 FROM alpine/git:latest AS cloner
 
 WORKDIR /src
-RUN git clone --depth=1 --branch main https://github.com/hashtopolis/agent-python.git .
+RUN git clone --depth=1 --branch master https://github.com/hashtopolis/agent-python.git .
 
 
 # ─── Stage 2: Runtime image ────────────────────────────────────────────────────────
